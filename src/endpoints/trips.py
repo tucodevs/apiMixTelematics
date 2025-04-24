@@ -43,6 +43,9 @@ def salvar_trips_no_banco(trips):
     conn = conectar_banco()
     cursor = conn.cursor()
 
+    total = len(trips)
+    inseridos = 0
+
     for trip in trips:
         try:
             cursor.execute("""
@@ -100,12 +103,17 @@ def salvar_trips_no_banco(trips):
                 trip.get("MaxDecelerationKilometersPerHourPerSecond"),
                 trip.get("MaxRpm")
             ))
+            inseridos += cursor.rowcount
         except Exception as e:
             print(f"[TRIPS] ⚠️ Erro ao inserir TripId {trip.get('TripId')}: {e}")
 
+    ignorados = total - inseridos
     conn.commit()
     cursor.close()
     conn.close()
+
+    print(f"[TRIPS] ✅ Incluídos: {inseridos} | Ignorados: {ignorados}")
+
 
 def parse_date(data_str):
     if not data_str:

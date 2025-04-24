@@ -1,6 +1,5 @@
 import os
 import requests
-import time
 from dotenv import load_dotenv
 from datetime import datetime, timedelta, timezone
 from core.auth import autenticar
@@ -10,9 +9,10 @@ load_dotenv()
 
 BASE_URL = os.getenv("MIX_API_URL")
 ORGANISATION_ID = os.getenv("MIX_ORGANISATION_ID")
-QUANTITY = "1000"
+QUANTITY = 1000
+SINCE_TOKEN_DIR = "since_tokens"
 
-# Mapeamento: EventTypeId -> (nome_tabela, nome_legivel)
+# Mapeamento de tipos de evento TR
 EVENTOS_TR = {
     -614457561876096876: ("tr_aceleracao_brusca", "Aceleração Brusca"),
     3296322604872944138: ("tr_curva_brusca", "Curva Brusca"),
@@ -35,9 +35,31 @@ EVENTOS_TR = {
     8889515098300962737: ("tr_excesso_rotacao", "Excesso de Rotação")
 }
 
-def gerar_since_token(dias_atras=1):
-    data = datetime.now(timezone.utc) - timedelta(days=dias_atras)
+def since_token_path():
+    os.makedirs(SINCE_TOKEN_DIR, exist_ok=True)
+    return os.path.join(SINCE_TOKEN_DIR, "since_token_eventos.txt")
+
+def carregar_since_token():
+    path = since_token_path()
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            return f.read().strip()
+    return gerar_since_token()
+
+def salvar_since_token(token):
+    path = since_token_path()
+    with open(path, "w") as f:
+        f.write(token)
+
+def gerar_since_token(horas_atras=24):
+    data = datetime.now(timezone.utc) - timedelta(hours=horas_atras)
     return data.strftime('%Y%m%d%H%M%S') + "000"
+
+def traduzir_token(token):
+    try:
+        return datetime.strptime(token[:14], "%Y%m%d%H%M%S").strftime("%d/%m/%Y %H:%M:%S")
+    except:
+        return "inválido"
 
 def normalizar_data(data_str):
     if not data_str:
@@ -47,103 +69,105 @@ def normalizar_data(data_str):
     except:
         return None
 
-def buscar_eventos(token, since_token, tentativas=3, espera=5):
+def buscar_eventos(token, since_token):
     headers = {"Authorization": f"Bearer {token}"}
     url = f"{BASE_URL}/api/events/groups/createdsince/organisation/{ORGANISATION_ID}/sincetoken/{since_token}/quantity/{QUANTITY}"
+    return requests.get(url, headers=headers, timeout=30)
 
-    for tentativa in range(1, tentativas + 1):
-        try:
-            response = requests.get(url, headers=headers)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.HTTPError as err:
-            if response.status_code == 429 and tentativa < tentativas:
-                time.sleep(espera)
-            else:
-                raise
-
-def inserir_evento(cursor, evento, nome_tabela):
-    sql = f'''
-        INSERT IGNORE INTO {nome_tabela} (
-            AssetId, DriverId, EventId, EventTypeId, EventCategory,
-            StartDateTime, StartLatitude, StartLongitude, StartSpeedKph, StartOdometer,
-            EndDateTime, EndLatitude, EndLongitude, EndSpeedKph, EndOdometer,
-            Value, FuelUsedLitres, ValueType, ValueUnits,
-            TotalTimeSeconds, TotalOccurances, SpeedLimit
-        ) VALUES (
-            %(AssetId)s, %(DriverId)s, %(EventId)s, %(EventTypeId)s, %(EventCategory)s,
-            %(StartDateTime)s, %(StartLatitude)s, %(StartLongitude)s, %(StartSpeedKph)s, %(StartOdometer)s,
-            %(EndDateTime)s, %(EndLatitude)s, %(EndLongitude)s, %(EndSpeedKph)s, %(EndOdometer)s,
-            %(Value)s, %(FuelUsedLitres)s, %(ValueType)s, %(ValueUnits)s,
-            %(TotalTimeSeconds)s, %(TotalOccurances)s, %(SpeedLimit)s
-        );
-    '''
-
-    dados = {
-        "AssetId": evento.get("AssetId"),
-        "DriverId": evento.get("DriverId"),
-        "EventId": evento.get("EventId"),
-        "EventTypeId": evento.get("EventTypeId"),
-        "EventCategory": evento.get("EventCategory"),
-        "StartDateTime": normalizar_data(evento.get("StartDateTime")),
-        "StartLatitude": evento.get("StartPosition", {}).get("Latitude"),
-        "StartLongitude": evento.get("StartPosition", {}).get("Longitude"),
-        "StartSpeedKph": evento.get("StartPosition", {}).get("SpeedKilometresPerHour"),
-        "StartOdometer": evento.get("StartPosition", {}).get("OdometerKilometres"),
-        "EndDateTime": normalizar_data(evento.get("EndDateTime")),
-        "EndLatitude": evento.get("EndPosition", {}).get("Latitude"),
-        "EndLongitude": evento.get("EndPosition", {}).get("Longitude"),
-        "EndSpeedKph": evento.get("EndPosition", {}).get("SpeedKilometresPerHour"),
-        "EndOdometer": evento.get("EndPosition", {}).get("OdometerKilometres"),
-        "Value": evento.get("Value"),
-        "FuelUsedLitres": evento.get("FuelUsedLitres"),
-        "ValueType": evento.get("ValueType"),
-        "ValueUnits": evento.get("ValueUnits"),
-        "TotalTimeSeconds": evento.get("TotalTimeSeconds"),
-        "TotalOccurances": evento.get("TotalOccurances"),
-        "SpeedLimit": evento.get("SpeedLimit")
-    }
-
-    cursor.execute(sql, dados)
-    return cursor.rowcount > 0
-
-def importar_eventos_lote(retornar_log=False):
-    since_token = gerar_since_token()
+def importar_eventos_lote():
     token = autenticar()
-    eventos = buscar_eventos(token, since_token)
+    since_token = carregar_since_token()
+    print(f"[EVENTOS] Utilizando since_token: {since_token} ({traduzir_token(since_token)})")
 
-    if not eventos:
-        print("Nenhum evento encontrado.")
-        return {} if retornar_log else None
+    response = buscar_eventos(token, since_token)
 
-    eventos_por_tipo = {}
-    for evento in eventos:
-        tipo_id = evento.get("EventTypeId")
-        if tipo_id in EVENTOS_TR:
-            eventos_por_tipo.setdefault(tipo_id, []).append(evento)
+    if response.status_code not in (200, 206):
+        print(f"[EVENTOS] ❌ Erro {response.status_code} ao buscar eventos.")
+        return
 
+    try:
+        eventos = response.json()
+        if not isinstance(eventos, list):
+            eventos = eventos.get("Events", [])
+        if not isinstance(eventos, list):
+            print("[EVENTOS] ⚠️ Resposta inesperada.")
+            return
+    except:
+        print("[EVENTOS] ❌ Erro ao interpretar resposta.")
+        return
+
+    print(f"[EVENTOS] ➕ {len(eventos)} eventos recebidos")
+    progresso = min(len(eventos), QUANTITY)
+    percentual = (progresso / QUANTITY) * 100
+    print(f"[EVENTOS] Progresso: {percentual:.1f}% do lote ({progresso}/{QUANTITY})")
+
+    # Distribuição por tipo de evento
     conn = conectar_banco()
     cursor = conn.cursor()
+    contadores = {}
 
-    log_resultado = {}
-
-    for tipo_id, eventos_filtrados in eventos_por_tipo.items():
-        nome_tabela, nome_legivel = EVENTOS_TR[tipo_id]
-        inseridos = 0
-        for evento in eventos_filtrados:
-            if inserir_evento(cursor, evento, nome_tabela):
-                inseridos += 1
-        print(f"📥 {nome_legivel}: {inseridos} inseridos de {len(eventos_filtrados)} recebidos.")
-        log_resultado[nome_legivel] = {
-            "inseridos": inseridos,
-            "recebidos": len(eventos_filtrados)
-        }
+    for evento in eventos:
+        tipo = evento.get("EventTypeId")
+        if tipo not in EVENTOS_TR:
+            continue
+        tabela, _ = EVENTOS_TR[tipo]
+        contadores[tipo] = contadores.get(tipo, 0) + 1
+        try:
+            cursor.execute(f'''
+                INSERT IGNORE INTO {tabela} (
+                    AssetId, DriverId, EventId, EventTypeId, EventCategory,
+                    StartDateTime, StartLatitude, StartLongitude, StartSpeedKph,
+                    StartOdometer, EndDateTime, EndLatitude, EndLongitude,
+                    EndSpeedKph, EndOdometer, Value, FuelUsedLitres,
+                    ValueType, ValueUnits, TotalTimeSeconds, TotalOccurances, SpeedLimit
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ''', (
+                evento.get("AssetId"),
+                evento.get("DriverId"),
+                evento.get("EventId"),
+                evento.get("EventTypeId"),
+                evento.get("EventCategory"),
+                normalizar_data(evento.get("StartDateTime")),
+                evento.get("StartLatitude"),
+                evento.get("StartLongitude"),
+                evento.get("StartSpeedKph"),
+                evento.get("StartOdometer"),
+                normalizar_data(evento.get("EndDateTime")),
+                evento.get("EndLatitude"),
+                evento.get("EndLongitude"),
+                evento.get("EndSpeedKph"),
+                evento.get("EndOdometer"),
+                evento.get("Value"),
+                evento.get("FuelUsedLitres"),
+                evento.get("ValueType"),
+                evento.get("ValueUnits"),
+                evento.get("TotalTimeSeconds"),
+                evento.get("TotalOccurances"),
+                evento.get("SpeedLimit")
+            ))
+        except Exception as e:
+            print(f"[EVENTOS] ⚠️ Erro ao inserir EventId {evento.get('EventId')}: {e}")
 
     conn.commit()
     cursor.close()
     conn.close()
 
-    if retornar_log:
-        return log_resultado
-    else:
-        print("🏁 Importação finalizada.")
+    for tipo_id, qtd in contadores.items():
+        print(f"[EVENTOS] ▶️ {EVENTOS_TR[tipo_id][1]}: {qtd} eventos")
+
+    total_eventos = len(eventos)
+    inseridos = sum(contadores.values())
+    ignorados = total_eventos - inseridos
+
+    print(f"[EVENTOS] ✅ Incluídos: {inseridos} | Ignorados: {ignorados}")
+
+    novo_token = response.headers.get("GetSinceToken")
+    has_more = response.headers.get("HasMoreItems", "False") == "True"
+    print(f"[EVENTOS] HasMoreItems: {has_more}")
+
+    if novo_token:
+        salvar_since_token(novo_token)
+
+    if not has_more:
+        print("[EVENTOS] 🚫 Fim dos dados. Próxima execução usará token das últimas 24h.")
+        salvar_since_token(gerar_since_token())
