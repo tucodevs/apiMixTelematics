@@ -1,20 +1,111 @@
 import os
-import requests
 import time
-from datetime import datetime, timedelta, timezone
+import requests
+from datetime import datetime, timezone, timedelta
+from dotenv import load_dotenv
 from core.auth import autenticar
 from core.db import conectar_banco
-from dotenv import load_dotenv
 
 load_dotenv()
 
 BASE_URL = os.getenv("MIX_API_URL")
 ORGANISATION_ID = os.getenv("MIX_ORGANISATION_ID")
-QUANTITY = "100"
+QUANTITY = 1000
+SINCE_TOKEN_FILE = "since_token.txt"
 
-def gerar_since_token(dias_atras=1):
-    data = datetime.now(timezone.utc) - timedelta(days=dias_atras)
+def carregar_since_token():
+    if os.path.exists(SINCE_TOKEN_FILE):
+        with open(SINCE_TOKEN_FILE, "r") as f:
+            return f.read().strip()
+    return gerar_since_token()
+
+def salvar_since_token(token):
+    with open(SINCE_TOKEN_FILE, "w") as f:
+        f.write(token)
+
+def gerar_since_token(horas_atras=24):
+    data = datetime.now(timezone.utc) - timedelta(hours=horas_atras)
     return data.strftime('%Y%m%d%H%M%S') + "000"
+
+def traduzir_token(token):
+    try:
+        data_str = token[:14]
+        return datetime.strptime(data_str, "%Y%m%d%H%M%S").strftime("%d/%m/%Y %H:%M:%S")
+    except:
+        return "inválido"
+
+def buscar_trips(token, since_token):
+    url = f"{BASE_URL}/api/trips/groups/createdsince/organisation/{ORGANISATION_ID}/sincetoken/{since_token}/quantity/{QUANTITY}?includeSubTrips=true"
+    headers = {"Authorization": f"Bearer {token}"}
+    return requests.get(url, headers=headers, timeout=30)
+
+def salvar_trips_no_banco(trips):
+    conn = conectar_banco()
+    cursor = conn.cursor()
+
+    for trip in trips:
+        try:
+            cursor.execute("""
+                INSERT INTO trips (
+                    TripId, AssetId, DriverId, TripStart, TripEnd, Notes,
+                    EngineSeconds, FirstDepart, LastHalt, DrivingTime, StandingTime, Duration,
+                    DistanceKilometers, StartOdometerKilometers, EndOdometerKilometers,
+                    StartEngineSeconds, EndEngineSeconds, PulseValue, FuelUsedLitres,
+                    MaxSpeedKilometersPerHour, MaxAccelerationKilometersPerHourPerSecond,
+                    MaxDecelerationKilometersPerHourPerSecond, MaxRpm
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    TripStart=VALUES(TripStart),
+                    TripEnd=VALUES(TripEnd),
+                    Notes=VALUES(Notes),
+                    EngineSeconds=VALUES(EngineSeconds),
+                    FirstDepart=VALUES(FirstDepart),
+                    LastHalt=VALUES(LastHalt),
+                    DrivingTime=VALUES(DrivingTime),
+                    StandingTime=VALUES(StandingTime),
+                    Duration=VALUES(Duration),
+                    DistanceKilometers=VALUES(DistanceKilometers),
+                    StartOdometerKilometers=VALUES(StartOdometerKilometers),
+                    EndOdometerKilometers=VALUES(EndOdometerKilometers),
+                    StartEngineSeconds=VALUES(StartEngineSeconds),
+                    EndEngineSeconds=VALUES(EndEngineSeconds),
+                    PulseValue=VALUES(PulseValue),
+                    FuelUsedLitres=VALUES(FuelUsedLitres),
+                    MaxSpeedKilometersPerHour=VALUES(MaxSpeedKilometersPerHour),
+                    MaxAccelerationKilometersPerHourPerSecond=VALUES(MaxAccelerationKilometersPerHourPerSecond),
+                    MaxDecelerationKilometersPerHourPerSecond=VALUES(MaxDecelerationKilometersPerHourPerSecond),
+                    MaxRpm=VALUES(MaxRpm)
+            """, (
+                trip.get("TripId"),
+                trip.get("AssetId"),
+                trip.get("DriverId"),
+                parse_date(trip.get("TripStart")),
+                parse_date(trip.get("TripEnd")),
+                trip.get("Notes"),
+                trip.get("EngineSeconds"),
+                parse_date(trip.get("FirstDepart")),
+                parse_date(trip.get("LastHalt")),
+                trip.get("DrivingTime"),
+                trip.get("StandingTime"),
+                trip.get("Duration"),
+                trip.get("DistanceKilometers"),
+                trip.get("StartOdometerKilometers"),
+                trip.get("EndOdometerKilometers"),
+                trip.get("StartEngineSeconds"),
+                trip.get("EndEngineSeconds"),
+                trip.get("PulseValue"),
+                trip.get("FuelUsedLitres"),
+                trip.get("MaxSpeedKilometersPerHour"),
+                trip.get("MaxAccelerationKilometersPerHourPerSecond"),
+                trip.get("MaxDecelerationKilometersPerHourPerSecond"),
+                trip.get("MaxRpm")
+            ))
+        except Exception as e:
+            print(f"[TRIPS] ⚠️ Erro ao inserir TripId {trip.get('TripId')}: {e}")
+
+    conn.commit()
+    cursor.close()
+    conn.close()
 
 def parse_date(data_str):
     if not data_str:
@@ -24,115 +115,52 @@ def parse_date(data_str):
     except:
         return None
 
-def buscar_trips(token, since_token, tentativas=3, espera=5):
-    headers = {"Authorization": f"Bearer {token}"}
-    url = f"{BASE_URL}/api/trips/groups/createdsince/organisation/{ORGANISATION_ID}/sincetoken/{since_token}/quantity/{QUANTITY}?includeSubTrips=true"
-
-
-    for tentativa in range(1, tentativas + 1):
-        try:
-            print(f"🔄 Buscando trips (tentativa {tentativa})...")
-            response = requests.get(url, headers=headers)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.HTTPError as err:
-            print(f"⚠️ Erro na requisição: {err}")
-            if response.status_code == 429 and tentativa < tentativas:
-                print(f"⏳ Aguardando {espera}s para nova tentativa...")
-                time.sleep(espera)
-            else:
-                raise
-
 def importar_trips():
-    since_token = gerar_since_token()
-    token = autenticar()
-    resposta = buscar_trips(token, since_token)
+    print("[TRIPS] Início da execução única")
 
-    if isinstance(resposta, dict) and "Trips" in resposta:
-        trips = resposta["Trips"]
-    else:
-        trips = resposta
+    try:
+        token = autenticar()
+        since_token = carregar_since_token()
+        print(f"[TRIPS] Utilizando since_token: {since_token} ({traduzir_token(since_token)})")
 
-    if not trips:
-        print("📭 Nenhuma trip encontrada.")
-        return
+        response = buscar_trips(token, since_token)
+
+        if response.status_code not in (200, 206):
+            print(f"[TRIPS] ❌ Erro {response.status_code} na requisição.")
+            return
 
 
-    if not trips:
-        print("📭 Nenhuma trip encontrada.")
-        return
+        try:
+            trips = response.json()
+            if not isinstance(trips, list):
+                trips = trips.get("Trips", [])
+            if not isinstance(trips, list):
+                print("[TRIPS] ⚠️ Estrutura de resposta inesperada.")
+                return
+        except:
+            print("[TRIPS] ❌ Erro ao interpretar resposta da API.")
+            return
 
-    print(f"📦 Total de trips recebidas: {len(trips)}")
-    conn = conectar_banco()
-    cursor = conn.cursor()
+        print(f"[TRIPS] ➕ {len(trips)} trips recebidas")
+        salvar_trips_no_banco(trips)
 
-    inseridas = 0
-    for trip in trips:
-        if not trip.get("TripId"):
-            continue
+        novo_token = response.headers.get("GetSinceToken")
+        has_more = response.headers.get("HasMoreItems", "False") == "True"
 
-        sql = """
-            INSERT INTO trips (
-                TripId, AssetId, DriverId, TripStart, TripEnd, Notes,
-                EngineSeconds, FirstDepart, LastHalt, DrivingTime, StandingTime, Duration,
-                DistanceKilometers, StartOdometerKilometers, EndOdometerKilometers,
-                StartEngineSeconds, EndEngineSeconds, PulseValue, FuelUsedLitres,
-                MaxSpeedKilometersPerHour, MaxAccelerationKilometersPerHourPerSecond,
-                MaxDecelerationKilometersPerHourPerSecond, MaxRpm
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE
-                TripStart=VALUES(TripStart),
-                TripEnd=VALUES(TripEnd),
-                Notes=VALUES(Notes),
-                EngineSeconds=VALUES(EngineSeconds),
-                FirstDepart=VALUES(FirstDepart),
-                LastHalt=VALUES(LastHalt),
-                DrivingTime=VALUES(DrivingTime),
-                StandingTime=VALUES(StandingTime),
-                Duration=VALUES(Duration),
-                DistanceKilometers=VALUES(DistanceKilometers),
-                StartOdometerKilometers=VALUES(StartOdometerKilometers),
-                EndOdometerKilometers=VALUES(EndOdometerKilometers),
-                StartEngineSeconds=VALUES(StartEngineSeconds),
-                EndEngineSeconds=VALUES(EndEngineSeconds),
-                PulseValue=VALUES(PulseValue),
-                FuelUsedLitres=VALUES(FuelUsedLitres),
-                MaxSpeedKilometersPerHour=VALUES(MaxSpeedKilometersPerHour),
-                MaxAccelerationKilometersPerHourPerSecond=VALUES(MaxAccelerationKilometersPerHourPerSecond),
-                MaxDecelerationKilometersPerHourPerSecond=VALUES(MaxDecelerationKilometersPerHourPerSecond),
-                MaxRpm=VALUES(MaxRpm)
-        """
+        if novo_token:
+            salvar_since_token(novo_token)
 
-        dados = (
-            trip.get("TripId"),
-            trip.get("AssetId"),
-            trip.get("DriverId"),
-            parse_date(trip.get("TripStart")),
-            parse_date(trip.get("TripEnd")),
-            trip.get("Notes"),
-            trip.get("EngineSeconds"),
-            parse_date(trip.get("FirstDepart")),
-            parse_date(trip.get("LastHalt")),
-            trip.get("DrivingTime"),
-            trip.get("StandingTime"),
-            trip.get("Duration"),
-            trip.get("DistanceKilometers"),
-            trip.get("StartOdometerKilometers"),
-            trip.get("EndOdometerKilometers"),
-            trip.get("StartEngineSeconds"),
-            trip.get("EndEngineSeconds"),
-            trip.get("PulseValue"),
-            trip.get("FuelUsedLitres"),
-            trip.get("MaxSpeedKilometersPerHour"),
-            trip.get("MaxAccelerationKilometersPerHourPerSecond"),
-            trip.get("MaxDecelerationKilometersPerHourPerSecond"),
-            trip.get("MaxRpm")
-        )
+        progresso = min(len(trips), QUANTITY)
+        percentual = (progresso / QUANTITY) * 100
 
-        cursor.execute(sql, dados)
-        inseridas += 1
+        print(f"[TRIPS] Progresso: {percentual:.1f}% do lote ({progresso}/{QUANTITY})")
+        print(f"[TRIPS] HasMoreItems: {has_more}")
+        if not has_more:
+            print("[TRIPS] 🚫 Fim dos dados. No próximo ciclo será usado since_token das últimas 24h.")
+            salvar_since_token(gerar_since_token())
 
-    conn.commit()
-    cursor.close()
-    conn.close()
-    print(f"✅ {inseridas} trips inseridas/atualizadas com sucesso.")
+    except Exception:
+        print("[TRIPS] ❌ Erro inesperado. Execução abortada com segurança.")
+
+if __name__ == "__main__":
+    importar_trips()
