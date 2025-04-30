@@ -1,4 +1,5 @@
 import os
+import json
 import requests
 from core.auth import autenticar
 from core.db import conectar_banco
@@ -36,33 +37,37 @@ def importar_drivers():
     for driver in drivers:
         cursor.execute("""
             INSERT INTO drivers (
-                DriverId, OrganisationId, Name, Description, SiteId, SiteName,
-                DriverLicenceNumber, DriverLicenceState, DriverLicenceExpiry,
-                DriverIdentification, IsActive
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                DriverId, SiteId, Name, ImageUri, FmDriverId,
+                EmployeeNumber, IsSystemDriver, MobileNumber, Email,
+                ExtendedDriverId, ExtendedDriverIdType, Country, AdditionalDetailFields
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
-                OrganisationId=VALUES(OrganisationId),
-                Name=VALUES(Name),
-                Description=VALUES(Description),
                 SiteId=VALUES(SiteId),
-                SiteName=VALUES(SiteName),
-                DriverLicenceNumber=VALUES(DriverLicenceNumber),
-                DriverLicenceState=VALUES(DriverLicenceState),
-                DriverLicenceExpiry=VALUES(DriverLicenceExpiry),
-                DriverIdentification=VALUES(DriverIdentification),
-                IsActive=VALUES(IsActive)
+                Name=VALUES(Name),
+                ImageUri=VALUES(ImageUri),
+                FmDriverId=VALUES(FmDriverId),
+                EmployeeNumber=VALUES(EmployeeNumber),
+                IsSystemDriver=VALUES(IsSystemDriver),
+                MobileNumber=VALUES(MobileNumber),
+                Email=VALUES(Email),
+                ExtendedDriverId=VALUES(ExtendedDriverId),
+                ExtendedDriverIdType=VALUES(ExtendedDriverIdType),
+                Country=VALUES(Country),
+                AdditionalDetailFields=VALUES(AdditionalDetailFields)
         """, (
             driver.get("DriverId"),
-            driver.get("OrganisationId"),
-            driver.get("Name"),
-            driver.get("Description"),
             driver.get("SiteId"),
-            driver.get("SiteName"),
-            driver.get("DriverLicenceNumber"),
-            driver.get("DriverLicenceState"),
-            driver.get("DriverLicenceExpiry"),
-            driver.get("DriverIdentification"),
-            driver.get("IsActive"),
+            driver.get("Name"),
+            driver.get("ImageUri"),
+            driver.get("FmDriverId"),
+            driver.get("EmployeeNumber"),
+            driver.get("IsSystemDriver"),
+            driver.get("MobileNumber"),
+            driver.get("Email"),
+            driver.get("ExtendedDriverId"),
+            driver.get("ExtendedDriverIdType"),
+            driver.get("Country"),
+            json.dumps(driver.get("AdditionalDetailFields")) if driver.get("AdditionalDetailFields") else None
         ))
 
     conn.commit()

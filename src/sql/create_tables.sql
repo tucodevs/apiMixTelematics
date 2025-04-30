@@ -55,19 +55,25 @@ CREATE TABLE tr_excesso_velocidade_40km_1 LIKE tr_excesso_velocidade_55km_2;
 CREATE TABLE tr_excesso_velocidade_55km_1 LIKE tr_excesso_velocidade_55km_2;
 CREATE TABLE tr_excesso_rotacao LIKE tr_excesso_velocidade_55km_2;
 
-CREATE TABLE IF NOT EXISTS drivers (
+CREATE TABLE drivers (
     DriverId BIGINT PRIMARY KEY,
     OrganisationId BIGINT,
     Name VARCHAR(255),
-    Description VARCHAR(255),
     SiteId BIGINT,
-    SiteName VARCHAR(255),
-    DriverLicenceNumber VARCHAR(100),
-    DriverLicenceState VARCHAR(100),
-    DriverLicenceExpiry DATETIME,
-    DriverIdentification VARCHAR(100),
-    IsActive BOOLEAN
+    ImageUri VARCHAR(500),
+    FmDriverId BIGINT,
+    EmployeeNumber VARCHAR(100),
+    IsSystemDriver BOOLEAN,
+    MobileNumber VARCHAR(100),
+    Email VARCHAR(255),
+    ExtendedDriverId BIGINT,
+    ExtendedDriverIdType VARCHAR(100),
+    Country VARCHAR(100),
+    AdditionalDetailFields JSON,
+    CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UpdatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
+
 
 CREATE TABLE IF NOT EXISTS assets (
     AssetId BIGINT PRIMARY KEY,
