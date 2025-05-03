@@ -1,85 +1,158 @@
 import os
 import json
 import requests
+from datetime import datetime, timedelta, timezone
+from dotenv import load_dotenv
 from core.auth import autenticar
 from core.db import conectar_banco
-from dotenv import load_dotenv
-from datetime import datetime, timedelta
 
 load_dotenv()
 
+BASE_URL = os.getenv("MIX_API_URL")
+ORGANISATION_ID = os.getenv("MIX_ORGANISATION_ID")
+QUANTITY = 1000
+SINCE_TOKEN_FILE = "since_tokens/since_token_trips.txt"
+FUSO_MANAUS = timezone(timedelta(hours=-4))
+
+def since_token_path():
+    os.makedirs(os.path.dirname(SINCE_TOKEN_FILE), exist_ok=True)
+    return SINCE_TOKEN_FILE
+
+def carregar_since_token():
+    path = since_token_path()
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            return f.read().strip()
+    return gerar_since_token()
+
+def salvar_since_token(token):
+    with open(since_token_path(), "w") as f:
+        f.write(token)
+
+def gerar_since_token(horas=24):
+    agora_utc = datetime.utcnow()
+    dt_manaus = agora_utc - timedelta(hours=4)
+    dt_inicio_manaus = dt_manaus - timedelta(hours=horas)
+    dt_inicio_utc = dt_inicio_manaus + timedelta(hours=4)
+
+    print(f"[TRIPS] ⏰ Agora em Manaus: {dt_manaus.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"[TRIPS] ⏰ SinceToken (UTC): {dt_inicio_utc.strftime('%Y-%m-%d %H:%M:%S')}")
+    return dt_inicio_utc.strftime("%Y%m%d%H%M%S") + "000"
+
+def traduzir_token(token):
+    try:
+        return datetime.strptime(token[:14], "%Y%m%d%H%M%S").strftime("%d/%m/%Y %H:%M:%S")
+    except:
+        return "inválido"
+
+def converter_utc_para_manaus(data_str):
+    if data_str is None:
+        return None
+    try:
+        dt_utc = datetime.strptime(data_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        return dt_utc.astimezone(FUSO_MANAUS).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception as e:
+        print(f"[TRIPS] ❌ Erro ao converter data: {data_str} -> {e}")
+        return None
+
 def importar_trips():
-    token = autenticar()
-    organisation_id = os.getenv("MIX_ORGANISATION_ID")
+    print("🧭 Importando viagens (trips)...")
+    token_api = autenticar()
+    since_token = carregar_since_token()
+    print(f"[TRIPS] SinceToken: {since_token} ({traduzir_token(since_token)})")
 
-    if not organisation_id:
-        print("⚠️ ORGANISATION_ID não definido no .env")
-        return
-
-    since_time = (datetime.utcnow() - timedelta(days=1)).isoformat() + "Z"
-    quantity = 500
-
-    url = f"{os.getenv('MIX_API_URL')}/api/trips/groups/createdsince/organisation/{organisation_id}/sincetoken/{since_time}/quantity/{quantity}"
+    url = f"{BASE_URL}/api/trips/groups/createdsince/organisation/{ORGANISATION_ID}/sincetoken/{since_token}/quantity/{QUANTITY}"
     headers = {
-        "Authorization": f"Bearer {token}",
+        "Authorization": f"Bearer {token_api}",
         "Accept": "application/json"
     }
 
     response = requests.get(url, headers=headers)
-    if response.status_code != 200:
-        print(f"Erro ao buscar trips: {response.status_code} - {response.text}")
+
+    if response.status_code not in (200, 206):
+        print(f"[TRIPS] ❌ Erro ao buscar trips: {response.status_code}")
         return
 
-    trips_data = response.json()
-
-    if not trips_data.get("Items"):
-        print("Nenhuma trip encontrada.")
+    try:
+        trips_data = response.json()
+    except Exception as e:
+        print(f"[TRIPS] ❌ Erro ao interpretar JSON: {e}")
         return
+
+    items = trips_data if isinstance(trips_data, list) else trips_data.get("Items", [])
+
+    if not items:
+        print("[TRIPS] ⚠️ Nenhuma trip retornada.")
+        return
+
+    print(f"[TRIPS] ➕ {len(items)} trips recebidas")
+    percentual = (min(len(items), QUANTITY) / QUANTITY) * 100
+    print(f"[TRIPS] Progresso: {percentual:.1f}% do lote")
 
     conn = conectar_banco()
     cursor = conn.cursor()
 
-    for trip in trips_data["Items"]:
-        cursor.execute("""
-            INSERT INTO trips (
-                TripId, AssetId, DriverId, StartTime, EndTime, Distance,
-                AverageSpeed, MaxSpeed, FuelUsed, StartLocation, EndLocation,
-                IdleTime, HarshEvents, SpeedingEvents, StopCount
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE
-                AssetId=VALUES(AssetId),
-                DriverId=VALUES(DriverId),
-                StartTime=VALUES(StartTime),
-                EndTime=VALUES(EndTime),
-                Distance=VALUES(Distance),
-                AverageSpeed=VALUES(AverageSpeed),
-                MaxSpeed=VALUES(MaxSpeed),
-                FuelUsed=VALUES(FuelUsed),
-                StartLocation=VALUES(StartLocation),
-                EndLocation=VALUES(EndLocation),
-                IdleTime=VALUES(IdleTime),
-                HarshEvents=VALUES(HarshEvents),
-                SpeedingEvents=VALUES(SpeedingEvents),
-                StopCount=VALUES(StopCount)
-        """, (
-            trip.get("TripId"),
-            trip.get("AssetId"),
-            trip.get("DriverId"),
-            trip.get("StartTime"),
-            trip.get("EndTime"),
-            trip.get("Distance"),
-            trip.get("AverageSpeed"),
-            trip.get("MaxSpeed"),
-            trip.get("FuelUsed"),
-            json.dumps(trip.get("StartLocation")) if trip.get("StartLocation") else None,
-            json.dumps(trip.get("EndLocation")) if trip.get("EndLocation") else None,
-            trip.get("IdleTime"),
-            trip.get("HarshEvents"),
-            trip.get("SpeedingEvents"),
-            trip.get("StopCount")
-        ))
+    inseridas, ignoradas = 0, 0
+
+    for trip in items:
+        try:
+            cursor.execute("""
+                INSERT INTO trips (
+                    TripId, AssetId, DistanceKilometers, DriverId, DrivingTime,
+                    Duration, EndEngineSeconds, EndOdometerKilometers, EngineSeconds,
+                    FirstDepart, FuelUsedLitres, LastHalt,
+                    MaxAccelerationKilometersPerHourPerSecond, MaxDecelerationKilometersPerHourPerSecond,
+                    MaxRpm, MaxSpeedKilometersPerHour, Notes, PulseValue,
+                    StandingTime, StartEngineSeconds, StartOdometerKilometers,
+                    TripEnd, TripStart
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    AssetId=VALUES(AssetId),
+                    DriverId=VALUES(DriverId),
+                    TripEnd=VALUES(TripEnd)
+            """, (
+                trip.get("TripId"),
+                trip.get("AssetId"),
+                trip.get("DistanceKilometers"),
+                trip.get("DriverId"),
+                trip.get("DrivingTime"),
+                trip.get("Duration"),
+                trip.get("EndEngineSeconds"),
+                trip.get("EndOdometerKilometers"),
+                trip.get("EngineSeconds"),
+                converter_utc_para_manaus(trip.get("FirstDepart")),
+                trip.get("FuelUsedLitres"),
+                converter_utc_para_manaus(trip.get("LastHalt")),
+                trip.get("MaxAccelerationKilometersPerHourPerSecond"),
+                trip.get("MaxDecelerationKilometersPerHourPerSecond"),
+                trip.get("MaxRpm"),
+                trip.get("MaxSpeedKilometersPerHour"),
+                trip.get("Notes"),
+                trip.get("PulseValue"),
+                trip.get("StandingTime"),
+                trip.get("StartEngineSeconds"),
+                trip.get("StartOdometerKilometers"),
+                converter_utc_para_manaus(trip.get("TripEnd")),
+                converter_utc_para_manaus(trip.get("TripStart"))
+            ))
+            inseridas += 1
+        except Exception as e:
+            ignoradas += 1
+            print(f"[TRIPS] ⚠️ Erro ao inserir TripId {trip.get('TripId')}: {e}")
 
     conn.commit()
     cursor.close()
     conn.close()
-    print(f"✅ {len(trips_data['Items'])} trips importadas/atualizadas com sucesso.")
+
+    print(f"[TRIPS] ✅ Incluídas: {inseridas} | Ignoradas: {ignoradas}")
+
+    novo_token = response.headers.get("GetSinceToken")
+    has_more = response.headers.get("HasMoreItems", "False") == "True"
+    print(f"[TRIPS] HasMoreItems: {has_more}")
+
+    if novo_token:
+        salvar_since_token(novo_token)
+
+    if not has_more:
+        print("[TRIPS] 🚫 Fim dos dados. Próxima execução usará token das últimas 24h.")
+        salvar_since_token(gerar_since_token())

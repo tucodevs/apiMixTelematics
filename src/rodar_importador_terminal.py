@@ -12,17 +12,17 @@ if __name__ == "__main__":
     print("🔐 Autenticando na API...")
     autenticar()
     
-    print("📄 Importando tipos de eventos...")
-    importar_tipos_eventos()
+    # print("📄 Importando tipos de eventos...")
+    # importar_tipos_eventos()
     
-    print("\n🚚 Importando eventos TR...")
-    importar_eventos_lote()
+    # print("\n🚚 Importando eventos TR...")
+    # importar_eventos_lote()
 
-    print("\n👨‍✈️ Importando motoristas...")
-    importar_drivers()
+    # print("\n👨‍✈️ Importando motoristas...")
+    # importar_drivers()
 
-    print("\n🚗 Importando ativos (assets)...")
-    importar_assets()
+    # print("\n🚗 Importando ativos (assets)...")
+    # importar_assets()
 
     print("\n🧭 Importando viagens (trips)...")
     importar_trips()
