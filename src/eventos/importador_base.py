@@ -11,8 +11,8 @@ load_dotenv()
 BASE_URL = os.getenv("MIX_API_URL")
 ORGANISATION_ID = os.getenv("MIX_ORGANISATION_ID")
 QUANTITY = "1000"
+FUSO_MANAUS = timezone(timedelta(hours=-4))  # UTC-4 para Manaus
 
-# Mapeamento: EventTypeId -> (nome_tabela, nome_legivel)
 EVENTOS_TR = {
     -614457561876096876: ("tr_aceleracao_brusca", "Aceleração Brusca"),
     -4465594527070247088: ("tr_batendo_transmissao", "Batendo Transmissão"),
@@ -36,15 +36,17 @@ EVENTOS_TR = {
     8889515098300962737: ("tr_excesso_rotacao", "Excesso de Rotação")
 }
 
-def gerar_since_token(dias_atras=1):
-    data = datetime.now(timezone.utc) - timedelta(days=dias_atras)
-    return data.strftime('%Y%m%d%H%M%S') + "000"
+def gerar_since_token(horas_atras=24):
+    data_manaus = datetime.now(FUSO_MANAUS) - timedelta(hours=horas_atras)
+    data_utc = data_manaus.astimezone(timezone.utc)
+    return data_utc.strftime('%Y%m%d%H%M%S') + "000"
 
 def normalizar_data(data_str):
     if not data_str:
         return None
     try:
-        return datetime.strptime(data_str.replace("Z", ""), "%Y-%m-%dT%H:%M:%S")
+        dt_utc = datetime.strptime(data_str.replace("Z", ""), "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+        return dt_utc.astimezone(FUSO_MANAUS).strftime("%Y-%m-%d %H:%M:%S")
     except:
         return None
 

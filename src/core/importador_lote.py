@@ -11,8 +11,8 @@ BASE_URL = os.getenv("MIX_API_URL")
 ORGANISATION_ID = os.getenv("MIX_ORGANISATION_ID")
 QUANTITY = 1000
 SINCE_TOKEN_DIR = "since_tokens"
+FUSO_MANAUS = timezone(timedelta(hours=-4))
 
-# Mapeamento de tipos de evento TR
 EVENTOS_TR = {
     -614457561876096876: ("tr_aceleracao_brusca", "Aceleração Brusca"),
     3296322604872944138: ("tr_curva_brusca", "Curva Brusca"),
@@ -32,7 +32,8 @@ EVENTOS_TR = {
     6314588935029952465: ("tr_inercia_aproveitada", "Inércia Aproveitada"),
     2561992611692992861: ("tr_marcha_lenta", "Marcha Lenta"),
     -154632669554799975: ("tr_marcha_lenta_5min", "Marcha Lenta 5min"),
-    8889515098300962737: ("tr_excesso_rotacao", "Excesso de Rotação")
+    8889515098300962737: ("tr_excesso_rotacao", "Excesso de Rotação"),
+    -4465594527070247088: ("tr_batendo_transmissao", "Batendo Transmissão")
 }
 
 def since_token_path():
@@ -52,8 +53,9 @@ def salvar_since_token(token):
         f.write(token)
 
 def gerar_since_token(horas_atras=24):
-    data = datetime.now(timezone.utc) - timedelta(hours=horas_atras)
-    return data.strftime('%Y%m%d%H%M%S') + "000"
+    dt_manaus = datetime.now(FUSO_MANAUS) - timedelta(hours=horas_atras)
+    dt_utc = dt_manaus.astimezone(timezone.utc)
+    return dt_utc.strftime('%Y%m%d%H%M%S') + "000"
 
 def traduzir_token(token):
     try:
@@ -61,11 +63,12 @@ def traduzir_token(token):
     except:
         return "inválido"
 
-def normalizar_data(data_str):
+def converter_utc_para_manaus(data_str):
     if not data_str:
         return None
     try:
-        return datetime.strptime(data_str.replace("Z", ""), "%Y-%m-%dT%H:%M:%S")
+        dt_utc = datetime.strptime(data_str.replace("Z", ""), "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+        return dt_utc.astimezone(FUSO_MANAUS).strftime("%Y-%m-%d %H:%M:%S")
     except:
         return None
 
@@ -101,7 +104,6 @@ def importar_eventos_lote():
     percentual = (progresso / QUANTITY) * 100
     print(f"[EVENTOS] Progresso: {percentual:.1f}% do lote ({progresso}/{QUANTITY})")
 
-    # Distribuição por tipo de evento
     conn = conectar_banco()
     cursor = conn.cursor()
     contadores = {}
@@ -127,12 +129,12 @@ def importar_eventos_lote():
                 evento.get("EventId"),
                 evento.get("EventTypeId"),
                 evento.get("EventCategory"),
-                normalizar_data(evento.get("StartDateTime")),
+                converter_utc_para_manaus(evento.get("StartDateTime")),
                 evento.get("StartLatitude"),
                 evento.get("StartLongitude"),
                 evento.get("StartSpeedKph"),
                 evento.get("StartOdometer"),
-                normalizar_data(evento.get("EndDateTime")),
+                converter_utc_para_manaus(evento.get("EndDateTime")),
                 evento.get("EndLatitude"),
                 evento.get("EndLongitude"),
                 evento.get("EndSpeedKph"),

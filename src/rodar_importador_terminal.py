@@ -15,8 +15,8 @@ if __name__ == "__main__":
     # print("📄 Importando tipos de eventos...")
     # importar_tipos_eventos()
     
-    # print("\n🚚 Importando eventos TR...")
-    # importar_eventos_lote()
+    print("\n🚚 Importando eventos TR...")
+    importar_eventos_lote()
 
     # print("\n👨‍✈️ Importando motoristas...")
     # importar_drivers()
