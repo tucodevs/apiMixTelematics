@@ -16,24 +16,25 @@ FUSO_MANAUS = timezone(timedelta(hours=-4))  # UTC-4 para Manaus
 EVENTOS_TR = {
     -614457561876096876: ("tr_aceleracao_brusca", "Aceleração Brusca"),
     -4465594527070247088: ("tr_batendo_transmissao", "Batendo Transmissão"),
-    3296322604872944138: ("tr_curva_brusca", "Curva Brusca"),
-    -1988381093544824498: ("tr_embreagem_acionada_indevida", "Embreagem Acionada Indevidamente"),
     2164520525956490666: ("tr_excesso_rpm_parado", "Excesso RPM Parado"),
-    74735825877637374: ("tr_excesso_velocidade_20km", "Excesso de Velocidade 20km"),
-    -6248653914463313400: ("tr_excesso_velocidade_30km", "Excesso de Velocidade 30km"),
-    6474504604434952727: ("tr_excesso_velocidade_40km_1", "Excesso de Velocidade 40km 1"),
-    -1992910974424714295: ("tr_excesso_velocidade_40km_2", "Excesso de Velocidade 40km 2"),
-    5511057473630489154: ("tr_excesso_velocidade_50km", "Excesso de Velocidade 50km"),
-    6580201539568389304: ("tr_excesso_velocidade_55km_1", "Excesso de Velocidade 55km 1"),
-    -9050647299058098294: ("tr_excesso_velocidade_55km_2", "Excesso de Velocidade 55km 2"),
     908787025131282024: ("tr_excesso_velocidade_60km", "Excesso de Velocidade 60km"),
     -6437542951044419628: ("tr_fora_faixa_verde", "Fora da Faixa Verde"),
     337658916843834225: ("tr_freada_brusca", "Freada Brusca"),
-    -1150311268842644462: ("tr_freada_brusca_grave", "Freada Brusca Grave"),
-    6314588935029952465: ("tr_inercia_aproveitada", "Inércia Aproveitada"),
     2561992611692992861: ("tr_marcha_lenta", "Marcha Lenta"),
-    -154632669554799975: ("tr_marcha_lenta_5min", "Marcha Lenta 5min"),
-    8889515098300962737: ("tr_excesso_rotacao", "Excesso de Rotação")
+    8889515098300962737: ("tr_excesso_rotacao", "Excesso de Rotação"),
+    # Mantidos comentados para referência e possível reativação:
+    # 3296322604872944138: ("tr_curva_brusca", "Curva Brusca"),
+    # -1988381093544824498: ("tr_embreagem_acionada_indevida", "Embreagem Acionada Indevidamente"),
+    # 74735825877637374: ("tr_excesso_velocidade_20km", "Excesso de Velocidade 20km"),
+    # -6248653914463313400: ("tr_excesso_velocidade_30km", "Excesso de Velocidade 30km"),
+    # 6474504604434952727: ("tr_excesso_velocidade_40km_1", "Excesso de Velocidade 40km 1"),
+    # -1992910974424714295: ("tr_excesso_velocidade_40km_2", "Excesso de Velocidade 40km 2"),
+    # 5511057473630489154: ("tr_excesso_velocidade_50km", "Excesso de Velocidade 50km"),
+    # 6580201539568389304: ("tr_excesso_velocidade_55km_1", "Excesso de Velocidade 55km 1"),
+    # -9050647299058098294: ("tr_excesso_velocidade_55km_2", "Excesso de Velocidade 55km 2"),
+    # -1150311268842644462: ("tr_freada_brusca_grave", "Freada Brusca Grave"),
+    # 6314588935029952465: ("tr_inercia_aproveitada", "Inércia Aproveitada"),
+    # -154632669554799975: ("tr_marcha_lenta_5min", "Marcha Lenta 5min"),
 }
 
 def gerar_since_token(horas_atras=24):
