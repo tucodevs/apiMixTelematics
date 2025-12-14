@@ -1,0 +1,9 @@
+<component name="libraryTable">
+  <library name="chromedriver-mac-arm64">
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/src/sql/chromedriver-mac-arm64.zip!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

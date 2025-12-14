@@ -4,6 +4,13 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta, timezone
 from core.auth import autenticar
 from core.db import conectar_banco
+from core.since_token import (
+    gerar_token_relativo_info,
+    traduzir_token as traduzir_token_fmt,
+    token_para_datetime,
+    validar_idade_token,
+    formatar_timedelta,
+)
 
 load_dotenv()
 
@@ -53,15 +60,13 @@ def salvar_since_token(token):
         f.write(token)
 
 def gerar_since_token(horas_atras=24):
-    dt_manaus = datetime.now(FUSO_MANAUS) - timedelta(hours=horas_atras)
-    dt_utc = dt_manaus.astimezone(timezone.utc)
-    return dt_utc.strftime('%Y%m%d%H%M%S') + "000"
+    token, dt_manaus, dt_utc = gerar_token_relativo_info(horas_atras)
+    print(f"[EVENTOS] 🕒 Origem Manaus (-4): {dt_manaus.strftime('%d/%m/%Y %H:%M:%S')}")
+    print(f"[EVENTOS] 🌐 Referência UTC (+0): {dt_utc.strftime('%d/%m/%Y %H:%M:%S')} -> token {token}")
+    return token
 
 def traduzir_token(token):
-    try:
-        return datetime.strptime(token[:14], "%Y%m%d%H%M%S").strftime("%d/%m/%Y %H:%M:%S")
-    except:
-        return "inválido"
+    return traduzir_token_fmt(token)
 
 def converter_utc_para_manaus(data_str):
     if not data_str:
@@ -72,15 +77,62 @@ def converter_utc_para_manaus(data_str):
     except:
         return None
 
+def garantir_token_na_janela(token_atual):
+    valido, dt, idade, limite = validar_idade_token(token_atual)
+    if valido:
+        return token_atual
+
+    if token_atual:
+        msg_idade = formatar_timedelta(idade) if idade else "idade desconhecida"
+        print(f"[EVENTOS] ⚠️ SinceToken {token_atual} está fora do limite ({msg_idade} > {formatar_timedelta(limite)}).")
+    else:
+        print("[EVENTOS] ⚠️ SinceToken inexistente ou inválido.")
+
+    novo_token = gerar_since_token(24)
+    salvar_since_token(novo_token)
+
+    print(f"[EVENTOS] 🔁 Novo since_token gerado automaticamente: {novo_token} ({traduzir_token(novo_token)})")
+    return novo_token
+
+def _format_token_debug(token):
+    if not token:
+        return "vazio"
+    if len(token) <= 10:
+        return token
+    return f"{token[:6]}...{token[-4:]} (len={len(token)})"
+
 def buscar_eventos(token, since_token):
     headers = {"Authorization": f"Bearer {token}"}
     url = f"{BASE_URL}/api/events/groups/createdsince/organisation/{ORGANISATION_ID}/sincetoken/{since_token}/quantity/{QUANTITY}"
-    return requests.get(url, headers=headers, timeout=30)
+    # print(f"[EVENTOS][DEBUG] URL requisitada: {url}")
+    # print(f"[EVENTOS][DEBUG] Header Authorization: Bearer {_format_token_debug(token)}")
+    try:
+        response = requests.get(url, headers=headers, timeout=30)
+    except Exception as exc:
+        # print(f"[EVENTOS][DEBUG] Falha de requisição: {exc}")
+        raise
+    # print(f"[EVENTOS][DEBUG] Status {response.status_code} | Headers: {dict(response.headers)}")
+    # if response.status_code not in (200, 206):
+    #     print(f"[EVENTOS][DEBUG] Corpo de erro: {response.text}")
+    return response
 
 def importar_eventos_lote():
+    print("\n######## EVENTOS ########")
+    # print(f"[EVENTOS][DEBUG] BASE_URL={BASE_URL} | ORGANISATION_ID={ORGANISATION_ID} | QUANTITY={QUANTITY}")
+    # print(f"[EVENTOS][DEBUG] SINCE_TOKEN_DIR={SINCE_TOKEN_DIR} (abs: {os.path.abspath(SINCE_TOKEN_DIR)})")
     token = autenticar()
+    # print(f"[EVENTOS][DEBUG] Token recebido: {_format_token_debug(token)}")
     since_token = carregar_since_token()
-    print(f"[EVENTOS] Utilizando since_token: {since_token} ({traduzir_token(since_token)})")
+    since_token = garantir_token_na_janela(since_token)
+    print(f"[EVENTOS] SinceToken em uso: {since_token}")
+    dt_utc = token_para_datetime(since_token)
+    if dt_utc:
+        dt_manaus = dt_utc.astimezone(FUSO_MANAUS)
+        print(f"[EVENTOS] • UTC/Londres (+0): {dt_utc.strftime('%d/%m/%Y %H:%M:%S')}")
+        print(f"[EVENTOS] • Manaus (-4): {dt_manaus.strftime('%d/%m/%Y %H:%M:%S')}")
+    else:
+        print("[EVENTOS] • Não foi possível interpretar o since_token.")
+    print("--------------------------------------------------")
 
     response = buscar_eventos(token, since_token)
 
@@ -94,9 +146,12 @@ def importar_eventos_lote():
             eventos = eventos.get("Events", [])
         if not isinstance(eventos, list):
             print("[EVENTOS] ⚠️ Resposta inesperada.")
+            # print(f"[EVENTOS][DEBUG] Corpo bruto: {response.text}")
             return
-    except:
+    except Exception as exc:
         print("[EVENTOS] ❌ Erro ao interpretar resposta.")
+        # print(f"[EVENTOS][DEBUG] Exceção: {exc}")
+        # print(f"[EVENTOS][DEBUG] Corpo bruto: {response.text}")
         return
 
     print(f"[EVENTOS] ➕ {len(eventos)} eventos recebidos")
@@ -164,12 +219,18 @@ def importar_eventos_lote():
     print(f"[EVENTOS] ✅ Incluídos: {inseridos} | Ignorados: {ignorados}")
 
     novo_token = response.headers.get("GetSinceToken")
+    proximo_legivel = None
     has_more = response.headers.get("HasMoreItems", "False") == "True"
     print(f"[EVENTOS] HasMoreItems: {has_more}")
 
     if novo_token:
         salvar_since_token(novo_token)
+        proximo_legivel = traduzir_token(novo_token)
 
-    if not has_more:
+    if has_more:
+        complemento = f" (próximo lote a partir de {proximo_legivel})" if proximo_legivel else ""
+        print(f"[EVENTOS] 🔁 Ainda existem dados pendentes.{complemento}")
+        print("[EVENTOS] ▶️ Rode novamente para continuar a importação.")
+    else:
         print("[EVENTOS] 🚫 Fim dos dados. Próxima execução usará token das últimas 24h.")
         salvar_since_token(gerar_since_token())
